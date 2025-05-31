@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 import requests
 import pandas as pd
 
+# BigQuery setup
 BQ_PROJECT = 'crypto-etl-project-461506'
 BQ_DATASET = 'finpulse_raw'
 BQ_TABLE = 'fin_events'
@@ -16,9 +17,10 @@ default_args = {
     'retry_delay': timedelta(minutes=5),
 }
 
+# ✅ CHANGED: schedule_interval → schedule
 with DAG(
     dag_id='fetch_financial_events',
-    schedule_interval='@daily',
+    schedule='@daily',  # ✅ compatible with Airflow 3.x
     default_args=default_args,
     catchup=False,
     max_active_runs=1,
