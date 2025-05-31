@@ -7,7 +7,7 @@ import requests
 import pandas as pd
 
 # BigQuery setup
-BQ_PROJECT = 'crypto-etl-project-461506'
+BQ_PROJECT = 'fintech-project'
 BQ_DATASET = 'finpulse_raw'
 BQ_TABLE = 'fin_events'
 
@@ -17,10 +17,9 @@ default_args = {
     'retry_delay': timedelta(minutes=5),
 }
 
-# ✅ CHANGED: schedule_interval → schedule
 with DAG(
     dag_id='fetch_financial_events',
-    schedule='@daily',  # ✅ compatible with Airflow 3.x
+    schedule='@daily',
     default_args=default_args,
     catchup=False,
     max_active_runs=1,
@@ -30,21 +29,52 @@ with DAG(
     @task()
     def extract():
         api_key = Variable.get("FINNHUB_API_KEY")
-        url = f"https://finnhub.io/api/v1/calendar/earnings?from={datetime.utcnow().date()}&to={datetime.utcnow().date()}&token={api_key}"
+        today = datetime.utcnow().date()
+        url = f"https://finnhub.io/api/v1/calendar/earnings?from={today}&to={today}&token={api_key}"
+
         response = requests.get(url)
         response.raise_for_status()
-        data = response.json().get('earningsCalendar', [])
+        json_data = response.json()
+
+        data = json_data.get('earningsCalendar', [])
+
+        if not data:
+            raise ValueError(f"No earnings data returned for {today}. Response was: {json_data}")
+
+        print(f"✅ Extracted {len(data)} records from Finnhub.")
+        print("🔎 Sample record:", data[0] if data else "None")
+
         return data
 
     @task()
     def transform(raw_events):
-        df = pd.DataFrame(raw_events)
-        df = df[['symbol', 'date', 'epsEstimate', 'hour', 'revenueEstimate']].fillna("null")
-        df['ingested_at'] = pd.Timestamp.utcnow().isoformat()
-        return df.to_dict(orient='records')
+        try:
+            df = pd.DataFrame(raw_events)
+
+            expected_cols = ['symbol', 'date', 'epsEstimate', 'hour', 'revenueEstimate']
+            missing = [col for col in expected_cols if col not in df.columns]
+
+            if missing:
+                print(f"⚠️ Warning: Missing columns in response: {missing}")
+                print("📦 Raw Data Sample:", df.head().to_dict(orient='records'))
+                return []  # Skip insert if data format is unexpected
+
+            df = df[expected_cols].fillna("null")
+            df['ingested_at'] = pd.Timestamp.utcnow().isoformat()
+
+            return df.to_dict(orient='records')
+
+        except Exception as e:
+            print(f"❌ Transform step failed: {e}")
+            print("📦 Raw data input:", raw_events)
+            return []
 
     @task()
     def build_sql(rows):
+        if not rows:
+            print("⚠️ No valid rows to insert into BigQuery.")
+            return "SELECT 1"  # Dummy no-op query
+
         values = ",\n".join([
             f"('{r['symbol']}', DATE('{r['date']}'), {r['epsEstimate']}, '{r['hour']}', {r['revenueEstimate']}, TIMESTAMP('{r['ingested_at']}'))"
             for r in rows
