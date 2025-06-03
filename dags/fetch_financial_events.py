@@ -1,6 +1,7 @@
 from airflow import DAG
 from airflow.decorators import task
 from airflow.models import Variable
+from airflow.providers.google.cloud.bigquery.hooks.bigquery import BigQueryHook
 from datetime import datetime, timedelta
 import requests
 
@@ -11,7 +12,7 @@ default_args = {
 }
 
 with DAG(
-    dag_id='fetch_financial_events_extract_only',
+    dag_id='fetch_financial_events_extract_load_bq',
     schedule='@daily',
     default_args=default_args,
     catchup=False,
@@ -39,4 +40,22 @@ with DAG(
 
         return data
 
-    extract()
+    @task()
+    def load_to_bigquery(data: list):
+        hook = BigQueryHook(gcp_conn_id='google_cloud_default', use_legacy_sql=False)
+
+        rows_to_insert = [{'json': record} for record in data]  # required format
+
+        hook.insert_all(
+            project_id='fintech-project',
+            dataset_id='finpulse_raw',
+            table_id='earnings_calendar',
+            rows=rows_to_insert,
+            ignore_unknown_values=True,
+            skip_invalid_rows=True
+        )
+
+        print(f"✅ Loaded {len(rows_to_insert)} records to BigQuery.")
+
+    extracted_data = extract()
+    load_to_bigquery(extracted_data)
