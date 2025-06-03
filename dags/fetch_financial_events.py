@@ -1,9 +1,11 @@
 from airflow import DAG
 from airflow.decorators import task
 from airflow.models import Variable
-from airflow.providers.google.cloud.hooks.bigquery import BigQueryHook
 from datetime import datetime, timedelta
 import requests
+
+from google.cloud import bigquery
+from google.api_core.exceptions import NotFound
 
 default_args = {
     'start_date': datetime(2024, 1, 1),
@@ -42,28 +44,41 @@ with DAG(
 
     @task()
     def load_to_bigquery(data: list):
-        from google.api_core.exceptions import GoogleAPIError
-
-        hook = BigQueryHook(gcp_conn_id='google_cloud_default', use_legacy_sql=False)
-
-        rows_to_insert = [{'json': record} for record in data]  # required format
+        client = bigquery.Client()
+        project_id = 'fintech-project'
+        dataset_id = 'finpulse_raw'
+        table_id = 'earnings_calendar'
+        full_table_id = f"{project_id}.{dataset_id}.{table_id}"
 
         try:
-            hook.insert_all(
-                project_id='fintech-project',
-                dataset_id='finpulse_raw',
-                table_id='earnings_calendar',
-                rows=rows_to_insert,
-                ignore_unknown_values=True,
-                skip_invalid_rows=True
-            )
-            print(f"✅ Loaded {len(rows_to_insert)} records to BigQuery.")
-        except GoogleAPIError as e:
-            print(f"❌ Google API error while inserting rows: {e}")
-            raise
-        except Exception as e:
-            print(f"❌ Unexpected error while inserting rows: {e}")
-            raise
+            client.get_table(full_table_id)
+            print("✅ Table exists.")
+        except NotFound:
+            print("⚠️ Table not found. Creating table.")
+            sample_record = data[0]
+            schema = [
+                bigquery.SchemaField(key, "STRING", mode="NULLABLE")
+                for key in sample_record.keys()
+            ]
+            table = bigquery.Table(full_table_id, schema=schema)
+            client.create_table(table)
+            print("✅ Table created successfully.")
 
+        # Insert data
+        errors = client.insert_rows_json(
+            table=full_table_id,
+            json_rows=data,
+            row_ids=[None] * len(data),
+            skip_invalid_rows=True,
+            ignore_unknown_values=True,
+        )
+
+        if errors:
+            print(f"❌ Errors during insert: {errors}")
+            raise RuntimeError(f"Insert failed: {errors}")
+        else:
+            print(f"✅ Inserted {len(data)} rows into {full_table_id}")
+
+    # DAG execution sequence
     extracted_data = extract()
     load_to_bigquery(extracted_data)
