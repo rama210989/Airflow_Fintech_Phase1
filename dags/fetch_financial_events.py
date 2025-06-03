@@ -39,31 +39,31 @@ with DAG(
         print("🔎 Sample record:", data[0] if data else "None")
 
         return data
-@task()
-def load_to_bigquery(data: list):
-    from google.api_core.exceptions import GoogleAPIError
 
-    hook = BigQueryHook(gcp_conn_id='google_cloud_default', use_legacy_sql=False)
+    @task()
+    def load_to_bigquery(data: list):
+        from google.api_core.exceptions import GoogleAPIError
 
-    rows_to_insert = [{'json': record} for record in data]  # required format
+        hook = BigQueryHook(gcp_conn_id='google_cloud_default', use_legacy_sql=False)
 
-    try:
-        hook.insert_all(
-            project_id='fintech-project',
-            dataset_id='finpulse_raw',
-            table_id='earnings_calendar',
-            rows=rows_to_insert,
-            ignore_unknown_values=True,
-            skip_invalid_rows=True
-        )
-        print(f"✅ Loaded {len(rows_to_insert)} records to BigQuery.")
-    except GoogleAPIError as e:
-        print(f"❌ Google API error while inserting rows: {e}")
-        raise
-    except Exception as e:
-        print(f"❌ Unexpected error while inserting rows: {e}")
-        raise
+        rows_to_insert = [{'json': record} for record in data]  # required format
 
+        try:
+            hook.insert_all(
+                project_id='fintech-project',
+                dataset_id='finpulse_raw',
+                table_id='earnings_calendar',
+                rows=rows_to_insert,
+                ignore_unknown_values=True,
+                skip_invalid_rows=True
+            )
+            print(f"✅ Loaded {len(rows_to_insert)} records to BigQuery.")
+        except GoogleAPIError as e:
+            print(f"❌ Google API error while inserting rows: {e}")
+            raise
+        except Exception as e:
+            print(f"❌ Unexpected error while inserting rows: {e}")
+            raise
 
     extracted_data = extract()
     load_to_bigquery(extracted_data)
