@@ -39,13 +39,15 @@ with DAG(
         print("🔎 Sample record:", data[0] if data else "None")
 
         return data
+@task()
+def load_to_bigquery(data: list):
+    from google.api_core.exceptions import GoogleAPIError
 
-    @task()
-    def load_to_bigquery(data: list):
-        hook = BigQueryHook(gcp_conn_id='google_cloud_default', use_legacy_sql=False)
+    hook = BigQueryHook(gcp_conn_id='google_cloud_default', use_legacy_sql=False)
 
-        rows_to_insert = [{'json': record} for record in data]  # required format
+    rows_to_insert = [{'json': record} for record in data]  # required format
 
+    try:
         hook.insert_all(
             project_id='fintech-project',
             dataset_id='finpulse_raw',
@@ -54,8 +56,14 @@ with DAG(
             ignore_unknown_values=True,
             skip_invalid_rows=True
         )
-
         print(f"✅ Loaded {len(rows_to_insert)} records to BigQuery.")
+    except GoogleAPIError as e:
+        print(f"❌ Google API error while inserting rows: {e}")
+        raise
+    except Exception as e:
+        print(f"❌ Unexpected error while inserting rows: {e}")
+        raise
+
 
     extracted_data = extract()
     load_to_bigquery(extracted_data)
